@@ -1,26 +1,25 @@
 package da
 
 import (
-	"fmt"
     "bytes"
+    "fmt"
     "log"
-	"github.com/btcsuite/btcd/wire"
-	"gopkg.in/zeromq/goczmq.v4"
-	"github.com/Layer-Edge/bitcoin-da/config"
+    "github.com/btcsuite/btcd/wire"
+    "gopkg.in/zeromq/goczmq.v4"
+    "github.com/Layer-Edge/bitcoin-da/config"
     "github.com/Layer-Edge/bitcoin-da/utils"
 )
 
 func RawBlockSubscriber(cfg *config.Config) {
 	channelReader := ZmqChannelReader{channeler: nil}
 	processor := BitcoinBlockProcessor{}
-	if channelReader.subscribe(cfg.ZmqEndpointRawBlock, "rawblock") == false {
+	if !channelReader.subscribe(cfg.ZmqEndpointRawBlock, "rawblock") {
 		return
 	}
 
 	defer channelReader.clear()
 
-	// Listen for messages
-	channelReader.listen(processor, cfg.ProtocolId)
+	StartListening(channelReader.channeler, &processor, cfg.WriteIntervalBlock)
 }
 
 type ZmqChannelReader struct {
@@ -41,39 +40,11 @@ func (zmqC *ZmqChannelReader) subscribe(endpoint string, typ string) bool {
 	return true
 }
 
-func (zmqC *ZmqChannelReader) validate() (bool, [][]byte) {
-    msg, ok := <-zmqC.channeler.RecvChan
-    // Validate
-    if !ok {
-        log.Println("Failed to receive message")
-        return false, nil
-    }
-    if len(msg) != 3 {
-        log.Println("Received message with unexpected number of parts")
-        return false, nil
-    }
-    return true, msg
-}
-
-func (zmqC *ZmqChannelReader) listen(processor RawBlockProcessor, protocolId string) {
-	fmt.Println("Listening for Raw Blocks (reader) from ZMQ channel...", zmqC.channeler)
-	for {
-		ok, msg := zmqC.validate()
-		if !ok {
-			continue
-		}
-		log.Println("Processing message")
-		processor.process(msg, protocolId)
-	}
-}
-
-type RawBlockProcessor interface {
-	process(data [][]byte, protocolId string) bool
-}
-
+// BitcoinBlockProcessor implements RawBlockProcessor interface.
 type BitcoinBlockProcessor struct{}
 
-func (btcProc BitcoinBlockProcessor) process(msg [][]byte, protocolId string) bool {
+// Process processes incoming raw block messages.
+func (btcProc *BitcoinBlockProcessor) Process(msg [][]byte) error {
 	topic := string(msg[0])
 	serializedBlock := msg[1]
 
@@ -83,18 +54,18 @@ func (btcProc BitcoinBlockProcessor) process(msg [][]byte, protocolId string) bo
 	parsedBlock, err := parseBlock(serializedBlock)
 	if err != nil {
 		log.Printf("Failed to parse transaction: %v", err)
-		return false
+		return err
 	}
 	printBlock(parsedBlock)
-	readPostedData(parsedBlock, []byte(protocolId))
-	return true
+	readPostedData(parsedBlock, []byte("protocolId")) // Replace with actual protocol ID if needed.
+	return nil
 }
 
-// parseBlock parses a serialized Bitcoin block
+// parseBlock parses a serialized Bitcoin block.
 func parseBlock(data []byte) (*wire.MsgBlock, error) {
-    var block wire.MsgBlock
-    err := block.Deserialize(bytes.NewReader(data))
-    if err != nil {
+	var block wire.MsgBlock
+	err := block.Deserialize(bytes.NewReader(data))
+	if err != nil {
         return nil, err
     }
     return &block, nil
